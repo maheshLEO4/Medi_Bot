@@ -44,7 +44,6 @@ def get_vectorstore():
 
     if os.path.exists(index_path):
         db = FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserialization=True)
-        st.info("✅ Loaded existing FAISS vectorstore")
     else:
         st.info("🚀 Building FAISS vectorstore from PDFs...")
         documents = load_pdf_files(DATA_PATH)
