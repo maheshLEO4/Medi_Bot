@@ -3,3 +3,5 @@ Pipfile.lock
 __pycache__/
 .env
 *.pyc
+vectorstore/
+.DS_Store
