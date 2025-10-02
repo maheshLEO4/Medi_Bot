@@ -63,12 +63,10 @@ def get_vectorstore():
             log_message("   Run: python build_db.py")
             return None
         
-        # Load existing vector store - CORRECTED METHOD
-        index = pc.Index(PINECONE_INDEX_NAME)
-        vectorstore = Pinecone(
-            index=index,
-            embedding=embedding_model,
-            text_key="text"
+        # Load existing vector store - FIXED: Use Pinecone.from_existing_index
+        vectorstore = Pinecone.from_existing_index(
+            index_name=PINECONE_INDEX_NAME,
+            embedding=embedding_model
         )
         
         log_message(f"✅ Loaded Pinecone index: {PINECONE_INDEX_NAME}")

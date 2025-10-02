@@ -205,6 +205,12 @@ Please provide your medical response:"""
                 if not st.session_state.vectorstore:
                     raise Exception("Vectorstore not initialized")
                 
+                # Create retriever from the vectorstore
+                # FIX: Use the vectorstore directly as retriever or create one properly
+                retriever = st.session_state.vectorstore.as_retriever(
+                    search_kwargs={'k': 3}
+                )
+                
                 # Create QA chain
                 qa_chain = RetrievalQA.from_chain_type(
                     llm=ChatGroq(
@@ -213,9 +219,7 @@ Please provide your medical response:"""
                         groq_api_key=groq_api_key,
                     ),
                     chain_type="stuff",
-                    retriever=st.session_state.vectorstore.as_retriever(
-                        search_kwargs={'k': 3}
-                    ),
+                    retriever=retriever,
                     return_source_documents=True,
                     chain_type_kwargs={'prompt': set_custom_prompt(MEDICAL_PROMPT_TEMPLATE)}
                 )
@@ -261,9 +265,10 @@ Please provide your medical response:"""
                         st.warning("🔑 **GROQ API Issue Detected**")
                         st.info("Please check that your GROQ_API_KEY is valid and has sufficient credits.")
                     
-                    if "pinecone" in str(e).lower() or "vector" in str(e).lower():
+                    if "pinecone" in str(e).lower() or "vector" in str(e).lower() or "retriever" in str(e).lower():
                         st.warning("🗄️ **Vector Database Issue Detected**")
-                        st.info("There might be an issue with the Pinecone connection or index.")
+                        st.info("There might be an issue with the Pinecone connection or the vectorstore configuration.")
+                        st.info("The vectorstore might need to be recreated with the correct methods.")
                     
                     # Show full traceback
                     st.code(f"Full traceback:\n{traceback.format_exc()}")
