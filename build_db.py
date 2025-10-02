@@ -1,28 +1,31 @@
 """
-build_db.py - Builds Chroma DB ONCE during deployment
+build_db.py - Builds Pinecone Vector Database ONCE during deployment
 This script runs automatically when the app is deployed
 """
 import os
-import shutil
+import time
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_community.document_loaders import PyPDFLoader, PyPDFDirectoryLoader
+from langchain_pinecone import PineconeVectorStore
+from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from pinecone import Pinecone, ServerlessSpec
 
-
+# Configuration
 DATA_PATH = "data/"
-CHROMA_DB_PATH = "chroma_db"
+PINECONE_INDEX_NAME = "medi-bot-medical"  # Will be created automatically
 
 def build_database():
-    """Build the Chroma database from PDFs"""
+    """Build the Pinecone vector database from PDFs"""
     print("=" * 60)
-    print("BUILDING MEDIBOT DATABASE (ONE-TIME SETUP)")
+    print("BUILDING MEDIBOT PINEcone DATABASE (ONE-TIME SETUP)")
     print("=" * 60)
     
-    # Check if DB already exists
-    if os.path.exists(CHROMA_DB_PATH) and os.listdir(CHROMA_DB_PATH):
-        print("✅ Chroma DB already exists. Skipping build.")
-        return True
+    # Validate environment variables
+    pinecone_api_key = os.getenv("PINECONE_API_KEY")
+    if not pinecone_api_key:
+        print("❌ Error: PINECONE_API_KEY environment variable not found!")
+        print("   Please set your Pinecone API key as an environment variable")
+        return False
     
     # Validate data folder
     if not os.path.exists(DATA_PATH):
@@ -38,7 +41,7 @@ def build_database():
     
     print(f"📁 Found {len(pdf_files)} PDF files")
     
-    # Load all PDFs using directory loader (more efficient)
+    # Load all PDFs
     print("\n📚 Loading PDF files...")
     try:
         loader = PyPDFDirectoryLoader(DATA_PATH)
@@ -84,27 +87,52 @@ def build_database():
         print(f"❌ Error loading embedding model: {str(e)}")
         return False
     
-    # Build Chroma DB
-    print("\n🏗️ Building Chroma database...")
+    # Initialize Pinecone and build vector store
+    print("\n🏗️ Building Pinecone database...")
     try:
-        # Remove existing DB if empty/corrupted
-        if os.path.exists(CHROMA_DB_PATH):
-            shutil.rmtree(CHROMA_DB_PATH)
+        # Initialize Pinecone client
+        pc = Pinecone(api_key=pinecone_api_key)
         
-        db = Chroma.from_documents(
+        # Delete existing index if it exists (reset on redeployment)
+        existing_indexes = [index.name for index in pc.list_indexes()]
+        if PINECONE_INDEX_NAME in existing_indexes:
+            print(f"🗑️ Deleting existing index: {PINECONE_INDEX_NAME}")
+            pc.delete_index(PINECONE_INDEX_NAME)
+            time.sleep(10)  # Wait for deletion to complete
+        
+        # Create new index
+        print(f"📦 Creating new index: {PINECONE_INDEX_NAME}")
+        pc.create_index(
+            name=PINECONE_INDEX_NAME,
+            dimension=384,  # all-MiniLM-L6-v2 dimension
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud="aws",
+                region="us-east-1"
+            )
+        )
+        
+        # Wait for index to be ready
+        print("⏳ Waiting for index to be ready...")
+        time.sleep(30)
+        
+        # Build vector store
+        print("📤 Uploading documents to Pinecone...")
+        vectorstore = PineconeVectorStore.from_documents(
             documents=chunks,
             embedding=embedding_model,
-            persist_directory=CHROMA_DB_PATH,
-            collection_metadata={"hnsw:space": "cosine"}
+            index_name=PINECONE_INDEX_NAME
         )
         
         # Verify build
-        collection_count = db._collection.count()
+        index_stats = pc.describe_index(PINECONE_INDEX_NAME)
         print(f"✅ Database built successfully!")
-        print(f"📊 Total chunks in database: {collection_count}")
+        print(f"📊 Index: {PINECONE_INDEX_NAME}")
+        print(f"📈 Dimension: {index_stats.dimension}")
+        print(f"📚 Total chunks uploaded: {len(chunks)}")
         
         print("\n" + "=" * 60)
-        print("🎉 MEDIBOT DATABASE READY FOR USE")
+        print("🎉 MEDIBOT PINEcone DATABASE READY FOR USE")
         print("=" * 60)
         
         return True

@@ -6,14 +6,29 @@ from data_processing import get_vectorstore, set_custom_prompt, get_vectorstore_
 import subprocess
 import sys
 
-# NEW: Auto-build database on startup if missing
+# Auto-build database on startup if missing
 def ensure_database():
-    db_path = "chroma_db"
-    if not os.path.exists(db_path) or not os.listdir(db_path):
+    pinecone_api_key = os.getenv("PINECONE_API_KEY")
+    if not pinecone_api_key:
+        st.error("❌ PINECONE_API_KEY environment variable not set!")
+        return False
+    
+    status = get_vectorstore_status()
+    if not status["pinecone_ready"]:
         st.warning("🚀 First-time setup: Building knowledge base...")
         try:
+            # Create a progress bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            status_text.text("Starting database build...")
+            progress_bar.progress(10)
+            
             result = subprocess.run([sys.executable, "build_db.py"], 
                                   capture_output=True, text=True, timeout=300)
+            
+            progress_bar.progress(100)
+            
             if result.returncode == 0:
                 st.success("✅ Database built successfully!")
                 st.rerun()
@@ -28,10 +43,17 @@ ensure_database()
 st.set_page_config(
     page_title="medi_bot - Medical Document Assistant",
     page_icon="🏥",
-    layout="wide"
+    layout="centered"
 )
 
-# REST OF YOUR EXISTING CODE REMAINS EXACTLY THE SAME...
+# Hide sidebar completely
+st.markdown("""
+    <style>
+        .css-1d391kg {display: none}
+        .css-1lcbmhc {display: none}
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🏥 medi_bot - Medical Document Assistant")
 
 # Initialize session state
@@ -42,143 +64,151 @@ if 'vectorstore' not in st.session_state:
 if 'vectorstore_loaded' not in st.session_state:
     st.session_state.vectorstore_loaded = False
 
-# Sidebar - Status
-st.sidebar.title("🔍 System Status")
+# Status indicator at top
+status_container = st.container()
 
-status = get_vectorstore_status()
-pdf_files = check_pdf_files()
-
-st.sidebar.subheader("📊 Current Status")
-st.sidebar.write(f"Data folder: {'✅' if status['data_folder_exists'] else '❌'}")
-st.sidebar.write(f"PDF files: {'✅' if status['pdf_files'] else '❌'}")
-st.sidebar.write(f"Chroma DB: {'✅' if status['chroma_db_exists'] else '❌'}")
-
-if pdf_files:
-    st.sidebar.subheader("📁 PDF Files")
-    for pdf in pdf_files[:5]:
-        st.sidebar.write(f"• {pdf}")
-    if len(pdf_files) > 5:
-        st.sidebar.write(f"• ... and {len(pdf_files) - 5} more")
+with status_container:
+    status = get_vectorstore_status()
+    pdf_files = check_pdf_files()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Medical Documents", len(pdf_files))
+    with col2:
+        if st.session_state.vectorstore_loaded:
+            st.metric("Vector DB", "Pinecone")
+        else:
+            st.metric("Vector DB", "Loading...")
+    with col3:
+        status_icon = "✅" if status["api_key_available"] else "❌"
+        st.metric("API Key", f"{status_icon} {'Set' if status['api_key_available'] else 'Missing'}")
+    with col4:
+        status_icon = "✅" if st.session_state.vectorstore_loaded else "🔄"
+        st.metric("Status", f"{status_icon} {'Online' if st.session_state.vectorstore_loaded else 'Initializing'}")
 
 # Load vectorstore ONCE when app starts
 if not st.session_state.vectorstore_loaded:
-    with st.spinner("📚 Loading MediBot knowledge base..."):
+    with st.spinner("📚 Loading MediBot knowledge base from Pinecone..."):
         vectorstore = get_vectorstore()
         
         if vectorstore:
             st.session_state.vectorstore = vectorstore
             st.session_state.vectorstore_loaded = True
             st.success("✅ MediBot Ready!")
-            
-            try:
-                doc_count = vectorstore._collection.count()
-                st.info(f"📊 Loaded **{doc_count} knowledge chunks** from **{len(pdf_files)} medical documents**")
-            except:
-                st.info(f"📊 Ready with **{len(pdf_files)} medical documents**")
+            st.rerun()
         else:
             st.error("""
             ❌ **Failed to load knowledge base**
             
-            The Chroma database was not found or failed to load.
-            This usually means the database wasn't built during deployment.
+            The Pinecone vector database was not found or failed to load.
+            This usually means:
+            - The database wasn't built during deployment
+            - PINECONE_API_KEY is not set correctly
+            - The Pinecone index doesn't exist
             
             **For developers:**
-            Run `python build_db.py` to build the database.
+            1. Set PINECONE_API_KEY environment variable
+            2. Run `python build_db.py` to build the database
             """)
             st.stop()
 
 # Chat Interface
 if st.session_state.vectorstore_loaded:
-    # Header with stats
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Medical Documents", len(pdf_files))
-    with col2:
-        try:
-            doc_count = st.session_state.vectorstore._collection.count()
-            st.metric("Knowledge Chunks", doc_count)
-        except:
-            st.metric("Knowledge Chunks", "Ready")
-    with col3:
-        st.metric("Status", "✅ Online")
-    
     # Clear chat button
-    if st.button("🗑️ Clear Chat History"):
-        st.session_state.messages = []
-        st.rerun()
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🗑️ Clear Chat", use_container_width=True):
+            st.session_state.messages = []
+            st.rerun()
     
     # Display chat messages
     st.subheader("💬 Medical Consultation")
-    for message in st.session_state.messages:
-        with st.chat_message(message['role']):
-            st.markdown(message['content'])
+    
+    # Chat container
+    chat_container = st.container()
+    
+    with chat_container:
+        for message in st.session_state.messages:
+            if message['role'] == 'user':
+                st.markdown(f"""
+                <div style='background-color: #f0f2f6; padding: 12px; border-radius: 10px; margin: 5px 0;'>
+                    <strong>You:</strong> {message['content']}
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style='background-color: #e6f3ff; padding: 12px; border-radius: 10px; margin: 5px 0;'>
+                    <strong>MediBot:</strong> {message['content']}
+                </div>
+                """, unsafe_allow_html=True)
+
+    # Enhanced medical prompt template
+    MEDICAL_PROMPT_TEMPLATE = """You are medi_bot, an expert AI medical assistant designed to provide accurate, helpful medical information.
+
+MEDICAL CONTEXT FROM DOCUMENTS:
+{context}
+
+USER QUESTION: {question}
+
+CRITICAL INSTRUCTIONS:
+1. Answer based SOLELY on the medical context provided above
+2. If the context doesn't contain relevant information, clearly state this limitation
+3. Provide clear, structured medical information when available in context
+4. Always emphasize consulting healthcare professionals for medical decisions
+5. Be precise and avoid speculation
+6. Format your response for easy reading with clear sections if appropriate
+
+Please provide your medical response:"""
 
     # Chat input
     prompt = st.chat_input("Ask about medical conditions, treatments, medications...")
     
     if prompt:
-        # Add user message
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        # Add user message to chat
         st.session_state.messages.append({"role": "user", "content": prompt})
         
         # Generate response
-        with st.chat_message("assistant"):
-            with st.spinner("🔍 Searching medical knowledge..."):
-                try:
-                    MEDICAL_PROMPT_TEMPLATE = """You are medi_bot, an expert AI medical assistant. Use the medical context to answer the question.
+        with st.spinner("🔍 Searching medical knowledge..."):
+            try:
+                qa_chain = RetrievalQA.from_chain_type(
+                    llm=ChatGroq(
+                        model_name="llama-3.1-8b-instant",
+                        temperature=0.1,
+                        groq_api_key=st.secrets["GROQ_API_KEY"],
+                    ),
+                    chain_type="stuff",
+                    retriever=st.session_state.vectorstore.as_retriever(
+                        search_kwargs={'k': 3}
+                    ),
+                    return_source_documents=True,
+                    chain_type_kwargs={'prompt': set_custom_prompt(MEDICAL_PROMPT_TEMPLATE)}
+                )
 
-Medical Context:
-{context}
+                response = qa_chain.invoke({'query': prompt})
+                result = response["result"]
+                source_documents = response["source_documents"]
+                
+                # Add assistant response to chat
+                st.session_state.messages.append({"role": "assistant", "content": result})
+                
+                # Show sources in expander
+                if source_documents:
+                    with st.expander("📚 View Source Documents"):
+                        for i, doc in enumerate(source_documents, 1):
+                            source_file = doc.metadata.get('source', 'Unknown')
+                            page_num = doc.metadata.get('page', 'N/A')
+                            st.write(f"**Source {i}:** {source_file} (Page {page_num})")
+                            st.text(doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content)
+                            st.divider()
+                
+                st.rerun()
+                
+            except Exception as e:
+                error_msg = f"Sorry, I encountered an error while processing your query. Please try again."
+                st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                st.error(f"Error: {str(e)}")
+                st.rerun()
 
-Question: {question}
-
-Provide accurate medical information based only on the context:"""
-
-                    qa_chain = RetrievalQA.from_chain_type(
-                        llm=ChatGroq(
-                            model_name="llama-3.1-8b-instant",
-                            temperature=0.1,
-                            groq_api_key=st.secrets["GROQ_API_KEY"],
-                        ),
-                        chain_type="stuff",
-                        retriever=st.session_state.vectorstore.as_retriever(
-                            search_kwargs={'k': 3}
-                        ),
-                        return_source_documents=True,
-                        chain_type_kwargs={'prompt': set_custom_prompt(MEDICAL_PROMPT_TEMPLATE)}
-                    )
-
-                    response = qa_chain.invoke({'query': prompt})
-                    result = response["result"]
-                    source_documents = response["source_documents"]
-                    
-                    # Display response
-                    st.markdown(result)
-                    
-                    # Display sources
-                    with st.expander("📚 Source Documents"):
-                        if source_documents:
-                            for i, doc in enumerate(source_documents, 1):
-                                source_file = doc.metadata.get('source', 'Unknown')
-                                page_num = doc.metadata.get('page', 'N/A')
-                                st.write(f"**Source {i}:** {source_file} (Page {page_num})")
-                                st.text(doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content)
-                                st.divider()
-                    
-                    # Add to chat history
-                    st.session_state.messages.append({"role": "assistant", "content": result})
-                    
-                except Exception as e:
-                    error_msg = f"Error processing query: {str(e)}"
-                    st.error(error_msg)
-                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
-
-# Footer
-st.sidebar.markdown("---")
-st.sidebar.info("""
-**💡 Medical Information:**
-- Always consult healthcare professionals
-- This is for informational purposes only
-- Verify critical medical information
-""")
+# Simple footer
+st.markdown("---")
+st.caption("💡 Always consult healthcare professionals for medical decisions. This assistant provides informational support only.")

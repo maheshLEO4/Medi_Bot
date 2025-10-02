@@ -1,20 +1,19 @@
 """
-data_processing.py - ONLY loads pre-built Chroma DB
+data_processing.py - ONLY loads pre-built Pinecone Vector Store
 Database is built by build_db.py during deployment
 """
 import os
 import logging
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import PromptTemplate
-from langchain_community.document_loaders import PyPDFDirectoryLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from pinecone import Pinecone
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger(__name__)
 
 DATA_PATH = "data/"
-CHROMA_DB_PATH = "chroma_db"
+PINECONE_INDEX_NAME = "medi-bot-medical"
 
 def log_message(message):
     """Log message"""
@@ -36,21 +35,15 @@ def get_embedding_model():
 
 def get_vectorstore():
     """
-    Load pre-built Chroma DB
-    This should NEVER build - only load existing DB
+    Load pre-built Pinecone Vector Store
     """
-    log_message("📚 Loading MediBot Vector Store...")
+    log_message("📚 Loading MediBot Pinecone Vector Store...")
     
-    # Check if DB exists
-    if not os.path.exists(CHROMA_DB_PATH):
-        log_message("❌ ERROR: Chroma DB not found!")
-        log_message("   The database should have been built during deployment.")
-        log_message("   Run: python build_db.py")
-        return None
-    
-    if not os.listdir(CHROMA_DB_PATH):
-        log_message("❌ ERROR: Chroma DB folder is empty!")
-        log_message("   The database build may have failed.")
+    # Check if API key is available
+    pinecone_api_key = os.getenv("PINECONE_API_KEY")
+    if not pinecone_api_key:
+        log_message("❌ ERROR: PINECONE_API_KEY environment variable not found!")
+        log_message("   Please set your Pinecone API key as an environment variable")
         return None
     
     try:
@@ -59,20 +52,29 @@ def get_vectorstore():
         if not embedding_model:
             return None
         
-        # Load existing database
-        db = Chroma(
-            persist_directory=CHROMA_DB_PATH,
-            embedding_function=embedding_model
+        # Initialize Pinecone client to check index status
+        pc = Pinecone(api_key=pinecone_api_key)
+        
+        # Check if index exists
+        existing_indexes = [index.name for index in pc.list_indexes()]
+        if PINECONE_INDEX_NAME not in existing_indexes:
+            log_message(f"❌ ERROR: Pinecone index '{PINECONE_INDEX_NAME}' not found!")
+            log_message("   The database should have been built during deployment.")
+            log_message("   Run: python build_db.py")
+            return None
+        
+        # Load existing vector store
+        vectorstore = PineconeVectorStore.from_existing_index(
+            index_name=PINECONE_INDEX_NAME,
+            embedding=embedding_model
         )
         
-        # Verify it loaded
-        collection_count = db._collection.count()
-        log_message(f"✅ Loaded database with {collection_count} chunks")
+        log_message(f"✅ Loaded Pinecone index: {PINECONE_INDEX_NAME}")
         
-        return db
+        return vectorstore
         
     except Exception as e:
-        log_message(f"❌ ERROR loading Chroma DB: {str(e)}")
+        log_message(f"❌ ERROR loading Pinecone: {str(e)}")
         return None
 
 def set_custom_prompt(custom_prompt_template):
@@ -104,64 +106,21 @@ def check_pdf_files():
 
 def get_vectorstore_status():
     """Get status of vector store"""
+    pinecone_api_key = os.getenv("PINECONE_API_KEY")
+    
+    try:
+        if pinecone_api_key:
+            pc = Pinecone(api_key=pinecone_api_key)
+            existing_indexes = [index.name for index in pc.list_indexes()]
+            pinecone_ready = PINECONE_INDEX_NAME in existing_indexes
+        else:
+            pinecone_ready = False
+    except:
+        pinecone_ready = False
+    
     return {
         "data_folder_exists": os.path.exists(DATA_PATH),
-        "chroma_db_exists": os.path.exists(CHROMA_DB_PATH) and len(os.listdir(CHROMA_DB_PATH)) > 0,
+        "pinecone_ready": pinecone_ready,
+        "api_key_available": bool(pinecone_api_key),
         "pdf_files": len(check_pdf_files()) > 0
     }
-
-# NEW: Function for build_db.py to use
-def process_documents():
-    """Process documents and create vector store - used by build_db.py"""
-    try:
-        # Check data directory
-        if not os.path.exists(DATA_PATH):
-            log_message(f"❌ Data directory '{DATA_PATH}' not found")
-            return None
-        
-        pdf_files = [f for f in os.listdir(DATA_PATH) if f.endswith('.pdf')]
-        if not pdf_files:
-            log_message("❌ No PDF files found in data directory")
-            return None
-        
-        log_message(f"📁 Found {len(pdf_files)} PDF files")
-        
-        # Load documents
-        log_message("📚 Loading PDF files...")
-        loader = PyPDFDirectoryLoader(DATA_PATH)
-        documents = loader.load()
-        
-        if not documents:
-            log_message("❌ No documents loaded")
-            return None
-        
-        log_message(f"📄 Loaded {len(documents)} pages")
-        
-        # Split documents
-        log_message("✂️ Splitting documents...")
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=100,
-            length_function=len,
-        )
-        chunks = text_splitter.split_documents(documents)
-        log_message(f"📦 Created {len(chunks)} chunks")
-        
-        # Create embeddings and vector store
-        log_message("🔧 Creating vector store...")
-        embeddings = get_embedding_model()
-        if not embeddings:
-            return None
-        
-        vectorstore = Chroma.from_documents(
-            documents=chunks,
-            embedding=embeddings,
-            persist_directory=CHROMA_DB_PATH
-        )
-        
-        log_message("✅ Vector store created successfully")
-        return vectorstore
-        
-    except Exception as e:
-        log_message(f"❌ Error processing documents: {str(e)}")
-        return None
