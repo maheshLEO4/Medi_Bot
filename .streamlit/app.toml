@@ -6,3 +6,5 @@ enableXsrfProtection = true
 
 [browser]
 gatherUsageStats = false
+[build]
+prebuild = "python build_db.py"
