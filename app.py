@@ -23,21 +23,23 @@ def ensure_database():
             status_text.text("Starting database build...")
             
             result = subprocess.run([sys.executable, "build_db.py"], 
-                                  capture_output=True, text=True, timeout=600)  # Increased timeout to 10 minutes
+                                  capture_output=True, text=True, timeout=600)
             
             if result.returncode == 0:
                 st.success("✅ Database built successfully!")
-                st.rerun()
+                return True
             else:
                 st.error(f"❌ Build failed: {result.stderr}")
                 if result.stdout:
                     with st.expander("Build Output"):
                         st.code(result.stdout)
+                return False
         except subprocess.TimeoutExpired:
             st.error("❌ Build timed out. Please check your Pinecone account and try again.")
+            return False
         except Exception as e:
             st.error(f"❌ Build error: {str(e)}")
-        return False
+            return False
     return True
 
 st.set_page_config(
@@ -76,6 +78,8 @@ if 'vectorstore' not in st.session_state:
     st.session_state.vectorstore = None
 if 'vectorstore_loaded' not in st.session_state:
     st.session_state.vectorstore_loaded = False
+if 'database_building' not in st.session_state:
+    st.session_state.database_building = False
 
 # Status indicator at top
 status_container = st.container()
@@ -96,8 +100,11 @@ with status_container:
         status_icon = "✅" if status["api_key_available"] else "❌"
         st.metric("API Key", f"{status_icon} {'Set' if status['api_key_available'] else 'Missing'}")
     with col4:
-        status_icon = "✅" if st.session_state.vectorstore_loaded else "🔄"
-        st.metric("Status", f"{status_icon} {'Online' if st.session_state.vectorstore_loaded else 'Initializing'}")
+        if st.session_state.database_building:
+            st.metric("Status", "🔄 Building DB")
+        else:
+            status_icon = "✅" if st.session_state.vectorstore_loaded else "🔄"
+            st.metric("Status", f"{status_icon} {'Online' if st.session_state.vectorstore_loaded else 'Initializing'}")
 
 # Debug info in expander
 with st.expander("🔧 System Status Details"):
@@ -106,42 +113,55 @@ with st.expander("🔧 System Status Details"):
     st.write(f"Vectorstore loaded: {st.session_state.vectorstore_loaded}")
     st.write(f"Pinecone index ready: {status['pinecone_ready']}")
     st.write(f"PDF files found: {pdf_files}")
+    st.write(f"Data folder exists: {status['data_folder_exists']}")
 
 # Load vectorstore ONCE when app starts
 if not st.session_state.vectorstore_loaded:
     # First check if we need to build the database
-    if not get_vectorstore_status()["pinecone_ready"]:
-        with st.spinner("🔧 Setting up Pinecone database..."):
+    if not status["pinecone_ready"]:
+        st.info("📦 Database setup required. Click the button below to build the knowledge base.")
+        
+        if st.button("🚀 Build Knowledge Base", type="primary"):
+            st.session_state.database_building = True
+            st.rerun()
+    
+    # If database is building or we need to build it
+    if st.session_state.database_building:
+        with st.spinner("🔧 Building Pinecone database... This may take 2-5 minutes."):
             if ensure_database():
+                st.session_state.database_building = False
+                st.success("✅ Database built successfully! Loading now...")
                 st.rerun()
             else:
+                st.session_state.database_building = False
+                st.error("❌ Database build failed. Please check the errors above.")
                 st.stop()
     
-    # Now load the vectorstore
-    with st.spinner("📚 Loading MediBot knowledge base from Pinecone..."):
-        vectorstore = get_vectorstore()
-        
-        if vectorstore:
-            st.session_state.vectorstore = vectorstore
-            st.session_state.vectorstore_loaded = True
-            st.success("✅ MediBot Ready!")
-            st.rerun()
-        else:
-            st.error("""
-            ❌ **Failed to load knowledge base**
+    # If database is ready, load the vectorstore
+    if status["pinecone_ready"] and not st.session_state.database_building:
+        with st.spinner("📚 Loading MediBot knowledge base from Pinecone..."):
+            vectorstore = get_vectorstore()
             
-            The Pinecone vector database was not found or failed to load.
-            This usually means:
-            - The database wasn't built during deployment
-            - PINECONE_API_KEY is not set correctly
-            - The Pinecone index doesn't exist
-            
-            **Troubleshooting steps:**
-            1. Check that PINECONE_API_KEY is set in Streamlit secrets
-            2. Make sure you have PDF files in the 'data' folder
-            3. The database will be built automatically on first run
-            """)
-            st.stop()
+            if vectorstore:
+                st.session_state.vectorstore = vectorstore
+                st.session_state.vectorstore_loaded = True
+                st.success("✅ MediBot Ready!")
+                st.rerun()
+            else:
+                st.error("""
+                ❌ **Failed to load knowledge base**
+                
+                The Pinecone vector database exists but failed to load.
+                This might be due to:
+                - Index corruption
+                - Network issues
+                - API rate limits
+                
+                **Try rebuilding the database:**
+                """)
+                if st.button("🔄 Rebuild Database"):
+                    st.session_state.database_building = True
+                    st.rerun()
 
 # Chat Interface
 if st.session_state.vectorstore_loaded:
@@ -206,7 +226,6 @@ Please provide your medical response:"""
                     raise Exception("Vectorstore not initialized")
                 
                 # Create retriever from the vectorstore
-                # FIX: Use the vectorstore directly as retriever or create one properly
                 retriever = st.session_state.vectorstore.as_retriever(
                     search_kwargs={'k': 3}
                 )
@@ -268,7 +287,6 @@ Please provide your medical response:"""
                     if "pinecone" in str(e).lower() or "vector" in str(e).lower() or "retriever" in str(e).lower():
                         st.warning("🗄️ **Vector Database Issue Detected**")
                         st.info("There might be an issue with the Pinecone connection or the vectorstore configuration.")
-                        st.info("The vectorstore might need to be recreated with the correct methods.")
                     
                     # Show full traceback
                     st.code(f"Full traceback:\n{traceback.format_exc()}")
