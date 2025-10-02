@@ -8,6 +8,13 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+import os
+import subprocess
+
+if not os.path.exists("chroma_db"):  # or your DB folder
+    print("📦 Building database...")
+    subprocess.run(["python", "build_db.py"])
+
 
 DATA_PATH = "data/"
 CHROMA_DB_PATH = "chroma_db"
