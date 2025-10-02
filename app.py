@@ -10,35 +10,34 @@ import sys
 def ensure_database():
     pinecone_api_key = os.getenv("PINECONE_API_KEY")
     if not pinecone_api_key:
-        st.error("❌ PINECONE_API_KEY environment variable not set!")
+        st.error("❌ PINECONE_API_KEY environment variable not set! Please add it to your Streamlit secrets.")
         return False
     
     status = get_vectorstore_status()
     if not status["pinecone_ready"]:
-        st.warning("🚀 First-time setup: Building knowledge base...")
+        st.warning("🚀 First-time setup: Building knowledge base... This may take a few minutes.")
         try:
-            # Create a progress bar
-            progress_bar = st.progress(0)
+            # Show a simple status instead of progress bar
             status_text = st.empty()
-            
             status_text.text("Starting database build...")
-            progress_bar.progress(10)
             
             result = subprocess.run([sys.executable, "build_db.py"], 
-                                  capture_output=True, text=True, timeout=300)
-            
-            progress_bar.progress(100)
+                                  capture_output=True, text=True, timeout=600)  # Increased timeout to 10 minutes
             
             if result.returncode == 0:
                 st.success("✅ Database built successfully!")
                 st.rerun()
             else:
                 st.error(f"❌ Build failed: {result.stderr}")
+                if result.stdout:
+                    with st.expander("Build Output"):
+                        st.code(result.stdout)
+        except subprocess.TimeoutExpired:
+            st.error("❌ Build timed out. Please check your Pinecone account and try again.")
         except Exception as e:
             st.error(f"❌ Build error: {str(e)}")
-
-# Run check at app start
-ensure_database()
+        return False
+    return True
 
 st.set_page_config(
     page_title="medi_bot - Medical Document Assistant",
@@ -88,6 +87,15 @@ with status_container:
 
 # Load vectorstore ONCE when app starts
 if not st.session_state.vectorstore_loaded:
+    # First check if we need to build the database
+    if not get_vectorstore_status()["pinecone_ready"]:
+        with st.spinner("🔧 Setting up Pinecone database..."):
+            if ensure_database():
+                st.rerun()
+            else:
+                st.stop()
+    
+    # Now load the vectorstore
     with st.spinner("📚 Loading MediBot knowledge base from Pinecone..."):
         vectorstore = get_vectorstore()
         

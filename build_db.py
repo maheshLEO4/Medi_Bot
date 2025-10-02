@@ -26,6 +26,8 @@ def build_database():
         print("❌ Error: PINECONE_API_KEY environment variable not found!")
         print("   Please set your Pinecone API key as an environment variable")
         return False
+    else:
+        print("✅ Pinecone API key found")
     
     # Validate data folder
     if not os.path.exists(DATA_PATH):
@@ -91,6 +93,7 @@ def build_database():
     print("\n🏗️ Building Pinecone database...")
     try:
         # Initialize Pinecone client
+        print("   Initializing Pinecone client...")
         pc = Pinecone(api_key=pinecone_api_key)
         
         # Delete existing index if it exists (reset on redeployment)
@@ -98,6 +101,7 @@ def build_database():
         if PINECONE_INDEX_NAME in existing_indexes:
             print(f"🗑️ Deleting existing index: {PINECONE_INDEX_NAME}")
             pc.delete_index(PINECONE_INDEX_NAME)
+            print("   Waiting for deletion to complete...")
             time.sleep(10)  # Wait for deletion to complete
         
         # Create new index
@@ -139,6 +143,8 @@ def build_database():
         
     except Exception as e:
         print(f"❌ Error building database: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
 if __name__ == "__main__":
