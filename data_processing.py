@@ -5,7 +5,7 @@ Database is built by build_db.py during deployment
 import os
 import logging
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Pinecone
+from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import PromptTemplate
 from pinecone import Pinecone
 
@@ -35,7 +35,7 @@ def get_embedding_model():
 
 def get_vectorstore():
     """
-    Load pre-built Pinecone Vector Store
+    Load pre-built Pinecone Vector Store - FIXED VERSION
     """
     log_message("📚 Loading MediBot Pinecone Vector Store...")
     
@@ -63,8 +63,8 @@ def get_vectorstore():
             log_message("   Run: python build_db.py")
             return None
         
-        # Load existing vector store - FIXED: Use Pinecone.from_existing_index
-        vectorstore = Pinecone.from_existing_index(
+        # FIXED: Use PineconeVectorStore instead of Pinecone
+        vectorstore = PineconeVectorStore(
             index_name=PINECONE_INDEX_NAME,
             embedding=embedding_model
         )
@@ -75,6 +75,8 @@ def get_vectorstore():
         
     except Exception as e:
         log_message(f"❌ ERROR loading Pinecone: {str(e)}")
+        import traceback
+        log_message(traceback.format_exc())
         return None
 
 def set_custom_prompt(custom_prompt_template):
