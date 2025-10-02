@@ -5,7 +5,7 @@ Database is built by build_db.py during deployment
 import os
 import logging
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_pinecone import PineconeVectorStore
+from langchain_community.vectorstores import Pinecone
 from langchain_core.prompts import PromptTemplate
 from pinecone import Pinecone
 
@@ -63,8 +63,8 @@ def get_vectorstore():
             log_message("   Run: python build_db.py")
             return None
         
-        # Load existing vector store
-        vectorstore = PineconeVectorStore.from_existing_index(
+        # Load existing vector store using langchain_community
+        vectorstore = Pinecone.from_existing_index(
             index_name=PINECONE_INDEX_NAME,
             embedding=embedding_model
         )

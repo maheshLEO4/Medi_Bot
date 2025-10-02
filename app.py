@@ -114,9 +114,10 @@ if not st.session_state.vectorstore_loaded:
             - PINECONE_API_KEY is not set correctly
             - The Pinecone index doesn't exist
             
-            **For developers:**
-            1. Set PINECONE_API_KEY environment variable
-            2. Run `python build_db.py` to build the database
+            **Troubleshooting steps:**
+            1. Check that PINECONE_API_KEY is set in Streamlit secrets
+            2. Make sure you have PDF files in the 'data' folder
+            3. The database will be built automatically on first run
             """)
             st.stop()
 

@@ -5,7 +5,7 @@ This script runs automatically when the app is deployed
 import os
 import time
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_pinecone import PineconeVectorStore
+from langchain_community.vectorstores import Pinecone
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from pinecone import Pinecone, ServerlessSpec
@@ -120,9 +120,9 @@ def build_database():
         print("⏳ Waiting for index to be ready...")
         time.sleep(30)
         
-        # Build vector store
+        # Build vector store using langchain_community
         print("📤 Uploading documents to Pinecone...")
-        vectorstore = PineconeVectorStore.from_documents(
+        vectorstore = Pinecone.from_documents(
             documents=chunks,
             embedding=embedding_model,
             index_name=PINECONE_INDEX_NAME
