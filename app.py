@@ -5,6 +5,7 @@ from langchain_groq import ChatGroq
 from data_processing import get_vectorstore, set_custom_prompt, get_vectorstore_status, check_pdf_files
 import subprocess
 import sys
+import traceback
 
 # Auto-build database on startup if missing
 def ensure_database():
@@ -45,11 +46,24 @@ st.set_page_config(
     layout="centered"
 )
 
-# Hide sidebar completely
+# Fix CSS for better visibility
 st.markdown("""
     <style>
+        /* Hide sidebar */
         .css-1d391kg {display: none}
         .css-1lcbmhc {display: none}
+        
+        /* Make chat messages more visible */
+        .stMarkdown {
+            color: black !important;
+        }
+        div[data-testid="stMarkdownContainer"] {
+            color: black !important;
+        }
+        /* Ensure text is visible in chat containers */
+        .stContainer {
+            color: black !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -84,6 +98,14 @@ with status_container:
     with col4:
         status_icon = "✅" if st.session_state.vectorstore_loaded else "🔄"
         st.metric("Status", f"{status_icon} {'Online' if st.session_state.vectorstore_loaded else 'Initializing'}")
+
+# Debug info in expander
+with st.expander("🔧 System Status Details"):
+    st.write(f"Pinecone API Key: {'✅ Set' if os.getenv('PINECONE_API_KEY') else '❌ Missing'}")
+    st.write(f"GROQ API Key: {'✅ Set' if os.getenv('GROQ_API_KEY') else '❌ Missing'}")
+    st.write(f"Vectorstore loaded: {st.session_state.vectorstore_loaded}")
+    st.write(f"Pinecone index ready: {status['pinecone_ready']}")
+    st.write(f"PDF files found: {pdf_files}")
 
 # Load vectorstore ONCE when app starts
 if not st.session_state.vectorstore_loaded:
@@ -133,23 +155,14 @@ if st.session_state.vectorstore_loaded:
     # Display chat messages
     st.subheader("💬 Medical Consultation")
     
-    # Chat container
-    chat_container = st.container()
-    
-    with chat_container:
-        for message in st.session_state.messages:
-            if message['role'] == 'user':
-                st.markdown(f"""
-                <div style='background-color: #f0f2f6; padding: 12px; border-radius: 10px; margin: 5px 0;'>
-                    <strong>You:</strong> {message['content']}
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div style='background-color: #e6f3ff; padding: 12px; border-radius: 10px; margin: 5px 0;'>
-                    <strong>MediBot:</strong> {message['content']}
-                </div>
-                """, unsafe_allow_html=True)
+    # Chat container - SIMPLIFIED VERSION
+    for message in st.session_state.messages:
+        if message['role'] == 'user':
+            with st.chat_message("user"):
+                st.write(message['content'])
+        else:
+            with st.chat_message("assistant"):
+                st.write(message['content'])
 
     # Enhanced medical prompt template
     MEDICAL_PROMPT_TEMPLATE = """You are medi_bot, an expert AI medical assistant designed to provide accurate, helpful medical information.
@@ -176,14 +189,28 @@ Please provide your medical response:"""
         # Add user message to chat
         st.session_state.messages.append({"role": "user", "content": prompt})
         
+        # Display user message immediately
+        with st.chat_message("user"):
+            st.write(prompt)
+        
         # Generate response
         with st.spinner("🔍 Searching medical knowledge..."):
             try:
+                # Test if GROQ API key is working
+                groq_api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+                if not groq_api_key:
+                    raise Exception("GROQ_API_KEY not found in secrets or environment variables")
+                
+                # Test if vectorstore is working
+                if not st.session_state.vectorstore:
+                    raise Exception("Vectorstore not initialized")
+                
+                # Create QA chain
                 qa_chain = RetrievalQA.from_chain_type(
                     llm=ChatGroq(
                         model_name="llama-3.1-8b-instant",
                         temperature=0.1,
-                        groq_api_key=st.secrets["GROQ_API_KEY"],
+                        groq_api_key=groq_api_key,
                     ),
                     chain_type="stuff",
                     retriever=st.session_state.vectorstore.as_retriever(
@@ -193,12 +220,17 @@ Please provide your medical response:"""
                     chain_type_kwargs={'prompt': set_custom_prompt(MEDICAL_PROMPT_TEMPLATE)}
                 )
 
+                # Execute query
                 response = qa_chain.invoke({'query': prompt})
                 result = response["result"]
                 source_documents = response["source_documents"]
                 
                 # Add assistant response to chat
                 st.session_state.messages.append({"role": "assistant", "content": result})
+                
+                # Display assistant response
+                with st.chat_message("assistant"):
+                    st.write(result)
                 
                 # Show sources in expander
                 if source_documents:
@@ -210,13 +242,31 @@ Please provide your medical response:"""
                             st.text(doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content)
                             st.divider()
                 
-                st.rerun()
-                
             except Exception as e:
-                error_msg = f"Sorry, I encountered an error while processing your query. Please try again."
-                st.session_state.messages.append({"role": "assistant", "content": error_msg})
-                st.error(f"Error: {str(e)}")
-                st.rerun()
+                # Better error logging
+                error_detail = f"Sorry, I encountered an error: {type(e).__name__}"
+                st.session_state.messages.append({"role": "assistant", "content": error_detail})
+                
+                with st.chat_message("assistant"):
+                    st.write(error_detail)
+                    st.error("Please check the technical details below for more information.")
+                
+                # Show detailed error in expander for debugging
+                with st.expander("🔧 Technical Error Details"):
+                    st.error(f"Error type: {type(e).__name__}")
+                    st.error(f"Error message: {str(e)}")
+                    
+                    # Check specific common issues
+                    if "GROQ" in str(e) or "API" in str(e):
+                        st.warning("🔑 **GROQ API Issue Detected**")
+                        st.info("Please check that your GROQ_API_KEY is valid and has sufficient credits.")
+                    
+                    if "pinecone" in str(e).lower() or "vector" in str(e).lower():
+                        st.warning("🗄️ **Vector Database Issue Detected**")
+                        st.info("There might be an issue with the Pinecone connection or index.")
+                    
+                    # Show full traceback
+                    st.code(f"Full traceback:\n{traceback.format_exc()}")
 
 # Simple footer
 st.markdown("---")
