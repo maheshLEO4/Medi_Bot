@@ -120,7 +120,7 @@ def build_database():
         print("⏳ Waiting for index to be ready...")
         time.sleep(30)
         
-        # Build vector store using langchain_community
+        # Build vector store - CORRECTED METHOD
         print("📤 Uploading documents to Pinecone...")
         vectorstore = Pinecone.from_documents(
             documents=chunks,
