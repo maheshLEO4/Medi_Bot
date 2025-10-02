@@ -3,13 +3,27 @@ import streamlit as st
 from langchain.chains import RetrievalQA
 from langchain_groq import ChatGroq
 from data_processing import get_vectorstore, set_custom_prompt, get_vectorstore_status, check_pdf_files
-import os
 import subprocess
+import sys
 
-if not os.path.exists("chroma_db"):  # or your DB folder
-    print("📦 Building database...")
-    subprocess.run(["python", "build_db.py"])
+# NEW: Auto-build database on startup if missing
+def ensure_database():
+    db_path = "chroma_db"
+    if not os.path.exists(db_path) or not os.listdir(db_path):
+        st.warning("🚀 First-time setup: Building knowledge base...")
+        try:
+            result = subprocess.run([sys.executable, "build_db.py"], 
+                                  capture_output=True, text=True, timeout=300)
+            if result.returncode == 0:
+                st.success("✅ Database built successfully!")
+                st.rerun()
+            else:
+                st.error(f"❌ Build failed: {result.stderr}")
+        except Exception as e:
+            st.error(f"❌ Build error: {str(e)}")
 
+# Run check at app start
+ensure_database()
 
 st.set_page_config(
     page_title="medi_bot - Medical Document Assistant",
@@ -17,6 +31,7 @@ st.set_page_config(
     layout="wide"
 )
 
+# REST OF YOUR EXISTING CODE REMAINS EXACTLY THE SAME...
 st.title("🏥 medi_bot - Medical Document Assistant")
 
 # Initialize session state

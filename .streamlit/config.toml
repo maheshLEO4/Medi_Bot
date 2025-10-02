@@ -1,0 +1,9 @@
+[server]
+headless = true
+
+[browser]
+serverAddress = "0.0.0.0"
+
+# Pre-build commands
+[build]
+command = "python build_db.py"
