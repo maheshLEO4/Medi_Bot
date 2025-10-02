@@ -3,6 +3,13 @@ import streamlit as st
 from langchain.chains import RetrievalQA
 from langchain_groq import ChatGroq
 from data_processing import get_vectorstore, set_custom_prompt, get_vectorstore_status, check_pdf_files
+import os
+import subprocess
+
+if not os.path.exists("chroma_db"):  # or your DB folder
+    print("📦 Building database...")
+    subprocess.run(["python", "build_db.py"])
+
 
 st.set_page_config(
     page_title="medi_bot - Medical Document Assistant",
