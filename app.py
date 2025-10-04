@@ -66,6 +66,12 @@ st.markdown("""
         margin-top: 0.5rem;
         font-size: 0.8rem;
     }
+    .stChatInput {
+        position: fixed;
+        bottom: 20px;
+        width: 80%;
+        left: 10%;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -201,7 +207,7 @@ if prompt := st.chat_input("Ask your medical question..."):
     # Get response
     with st.spinner("🧠 Thinking..."):
         try:
-            response = qdrant_client.invoke({"query": prompt})
+            response = qa_chain.invoke({"query": prompt})
             answer = response["result"]
             sources = response.get("source_documents", [])
             
