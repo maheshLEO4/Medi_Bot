@@ -37,49 +37,50 @@ st.markdown("""
 <style>
     .main-header {
         text-align: center;
-        padding: 1rem 0;
+        padding: 0.5rem 0;
         margin-bottom: 1rem;
     }
     .user-message {
-        background-color: #f8f9fa;
-        padding: 1rem;
-        border-radius: 15px;
-        margin: 0.5rem 0;
-        border-left: 4px solid #4CAF50;
+        background-color: #f0f2f6;
+        padding: 12px 16px;
+        border-radius: 18px;
+        margin: 8px 0;
         max-width: 80%;
         margin-left: auto;
     }
     .assistant-message {
-        background-color: #e3f2fd;
-        padding: 1rem;
-        border-radius: 15px;
-        margin: 0.5rem 0;
-        border-left: 4px solid #2196F3;
+        background-color: #e8f4fd;
+        padding: 12px 16px;
+        border-radius: 18px;
+        margin: 8px 0;
         max-width: 80%;
         margin-right: auto;
     }
     .chat-container {
-        min-height: 400px;
+        min-height: 500px;
         max-height: 600px;
         overflow-y: auto;
         padding: 1rem;
-        border: 1px solid #e0e0e0;
-        border-radius: 10px;
-        margin-bottom: 2rem;
-        background-color: #fafafa;
+        margin-bottom: 1rem;
     }
-    .stChatInput {
-        position: relative;
-        margin-top: 2rem;
+    .clear-btn {
+        margin-bottom: 1rem;
+    }
+    .sources-dropdown {
+        background-color: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 8px;
+        margin-top: 8px;
+        font-size: 0.85rem;
     }
     /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     .stDeployButton {display:none;}
-    /* Style buttons */
-    .stButton button {
-        width: 100%;
-        border-radius: 10px;
+    /* Chat input styling */
+    .stChatInput {
+        position: relative;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -112,7 +113,7 @@ def init_qdrant():
         collections = client.get_collections()
         collection_names = [col.name for col in collections.collections]
         if COLLECTION_NAME not in collection_names:
-            st.error(f"Collection '{COLLECTION_NAME}' not found.")
+            st.error("Medical database not found. Please check your setup.")
             return None
         
         vectorstore = QdrantVectorStore(
@@ -122,7 +123,7 @@ def init_qdrant():
         )
         return vectorstore
     except Exception as e:
-        st.error(f"Failed to connect to Qdrant: {e}")
+        st.error(f"Database connection failed: {e}")
         return None
 
 @st.cache_resource
@@ -135,7 +136,6 @@ def load_llm():
 
 # Initialize components
 try:
-    embedding_model = load_embedding_model()
     vectorstore = init_qdrant()
     llm = load_llm()
 except Exception as e:
@@ -148,14 +148,14 @@ retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 from langchain.prompts import PromptTemplate
 
 custom_prompt = PromptTemplate(
-    template="""You are a medical assistant. Answer the question naturally using the context.
+    template="""You are MediBot, a helpful and knowledgeable medical assistant. Use the following medical context to answer the user's question in a natural, conversational way. Provide accurate, helpful information without using phrases like "based on the context" or "according to the documents".
 
-Context:
+Medical Context:
 {context}
 
 Question: {question}
 
-Answer conversationally:""",
+Answer in a friendly, professional tone as if you're having a conversation:""",
     input_variables=["context", "question"]
 )
 
@@ -168,53 +168,80 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 # -------------------------
-# 💬 Chat Interface with Clear Button
+# 💬 Clean Chat Interface
 # -------------------------
 
 # Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! I'm MediBot. How can I assist you with medical questions today?"}
+        {"role": "assistant", "content": "Hello! I'm MediBot, your AI medical assistant. How can I help you with medical questions today?"}
     ]
+
+# Store source documents
+if "source_docs" not in st.session_state:
+    st.session_state.source_docs = {}
 
 # Clear chat function
 def clear_chat():
     st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! I'm MediBot. How can I assist you with medical questions today?"}
+        {"role": "assistant", "content": "Hello! I'm MediBot, your AI medical assistant. How can I help you with medical questions today?"}
     ]
+    st.session_state.source_docs = {}
 
-# Clear chat button at the top
+# Clear chat button
 col1, col2 = st.columns([3, 1])
 with col2:
-    if st.button("🗑️ Clear Chat", use_container_width=True):
+    if st.button("🗑️ Clear Chat", use_container_width=True, key="clear_chat"):
         clear_chat()
         st.rerun()
 
-# Chat container with scroll
+# Chat container
 st.markdown('<div class="chat-container">', unsafe_allow_html=True)
 
 # Display chat messages
-for message in st.session_state.messages:
+for i, message in enumerate(st.session_state.messages):
     if message["role"] == "user":
         st.markdown(f'<div class="user-message"><strong>You:</strong><br>{message["content"]}</div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="assistant-message"><strong>MediBot:</strong><br>{message["content"]}</div>', unsafe_allow_html=True)
+        
+        # Show sources dropdown for assistant messages that have sources
+        if i in st.session_state.source_docs and st.session_state.source_docs[i]:
+            with st.expander("📚 View Sources", expanded=False):
+                sources = st.session_state.source_docs[i]
+                for j, doc in enumerate(sources, 1):
+                    source_name = doc.metadata.get('source', 'Unknown Document')
+                    page_info = doc.metadata.get('page', '')
+                    
+                    st.markdown(f"**Source {j}:**")
+                    st.markdown(f"📄 {os.path.basename(source_name)}")
+                    if page_info:
+                        st.markdown(f"📖 Page: {page_info}")
+                    st.markdown(f"**Content:** {doc.page_content[:200]}...")
+                    st.markdown("---")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# Chat input at the bottom
+# Chat input
 if prompt := st.chat_input("Ask a medical question..."):
-    # Add user message
+    # Add user message to chat
     st.session_state.messages.append({"role": "user", "content": prompt})
     
-    # Get response
+    # Get and display response
     with st.spinner("Thinking..."):
         try:
             response = qa_chain.invoke({"query": prompt})
             answer = response["result"]
+            sources = response.get("source_documents", [])
+            
+            # Store sources for this message
+            message_index = len(st.session_state.messages)
+            st.session_state.source_docs[message_index] = sources
+            
             st.session_state.messages.append({"role": "assistant", "content": answer})
+            
         except Exception as e:
-            error_msg = "I apologize, but I encountered an error. Please try again."
+            error_msg = "I apologize, but I encountered an error processing your question. Please try again."
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
     
     st.rerun()
@@ -223,4 +250,4 @@ if prompt := st.chat_input("Ask a medical question..."):
 # 🎯 Simple Footer
 # -------------------------
 st.markdown("---")
-st.caption("MediBot - AI Medical Assistant")
+st.caption("MediBot - Your AI Medical Assistant")
