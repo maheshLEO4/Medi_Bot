@@ -2,452 +2,249 @@ import os
 import streamlit as st
 from langchain.chains import RetrievalQA
 from langchain_groq import ChatGroq
-from data_processing import get_vectorstore, set_custom_prompt, get_vectorstore_status, check_pdf_files
-import subprocess
-import sys
-import traceback
+from langchain_huggingface import HuggingFaceEmbeddings
+from qdrant_client import QdrantClient
+from langchain_qdrant import QdrantVectorStore
+from dotenv import load_dotenv
 
-# Auto-build database on startup if missing
-def ensure_database():
-    pinecone_api_key = os.getenv("PINECONE_API_KEY")
-    if not pinecone_api_key:
-        st.error("PINECONE_API_KEY environment variable not set! Please add it to your Streamlit secrets.")
-        return False
-    
-    status = get_vectorstore_status()
-    if not status["pinecone_ready"]:
-        st.warning("First-time setup: Building knowledge base... This may take a few minutes.")
-        try:
-            status_text = st.empty()
-            status_text.text("Starting database build...")
-            
-            result = subprocess.run([sys.executable, "build_db.py"], 
-                                  capture_output=True, text=True, timeout=600)
-            
-            if result.returncode == 0:
-                st.success("Database built successfully!")
-                return True
-            else:
-                st.error(f"Build failed: {result.stderr}")
-                if result.stdout:
-                    with st.expander("Build Output"):
-                        st.code(result.stdout)
-                return False
-        except subprocess.TimeoutExpired:
-            st.error("Build timed out. Please check your Pinecone account and try again.")
-            return False
-        except Exception as e:
-            st.error(f"Build error: {str(e)}")
-            return False
-    return True
+# Load environment variables
+load_dotenv()
+
+# -------------------------
+# 🔐 API KEYS
+# -------------------------
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# -------------------------
+# ⚙️ CONFIG
+# -------------------------
+COLLECTION_NAME = "medical-documents"
+EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 st.set_page_config(
-    page_title="MediBot - Medical Assistant",
-    page_icon="🏥",
-    layout="wide"
+    page_title="🏥 MediBot", 
+    page_icon="🧠", 
+    layout="centered",
+    initial_sidebar_state="collapsed"
 )
 
-# Enhanced CSS for much better visibility
+# -------------------------
+# 🎨 Custom CSS for Better UI
+# -------------------------
 st.markdown("""
-    <style>
-        /* Force dark text on light background */
-        .stApp {
-            background-color: #f0f2f6;
-        }
-        
-        /* Main content area */
-        .main .block-container {
-            padding: 2rem 3rem;
-            max-width: 1200px;
-        }
-        
-        /* All text elements */
-        p, span, div, h1, h2, h3, label {
-            color: #0e1117 !important;
-        }
-        
-        /* Chat messages */
-        .stChatMessage {
-            background-color: white !important;
-            border: 1px solid #e0e0e0 !important;
-            border-radius: 10px !important;
-            padding: 1rem !important;
-            margin: 0.5rem 0 !important;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
-        }
-        
-        /* User messages - blue tint */
-        .stChatMessage[data-testid*="user"] {
-            background: linear-gradient(135deg, #e3f2fd 0%, #f5f9ff 100%) !important;
-            border-left: 4px solid #2196f3 !important;
-        }
-        
-        /* Assistant messages - green tint */
-        .stChatMessage[data-testid*="assistant"] {
-            background: linear-gradient(135deg, #e8f5e9 0%, #f5fdf5 100%) !important;
-            border-left: 4px solid #4caf50 !important;
-        }
-        
-        /* Chat message text */
-        .stChatMessage p {
-            color: #1a1a1a !important;
-            font-size: 16px !important;
-            line-height: 1.6 !important;
-        }
-        
-        /* Metric cards */
-        div[data-testid="metric-container"] {
-            background: white !important;
-            border: 2px solid #e0e0e0 !important;
-            border-radius: 8px !important;
-            padding: 1rem !important;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
-        }
-        
-        div[data-testid="metric-container"] > div {
-            color: #0e1117 !important;
-        }
-        
-        /* Buttons */
-        .stButton button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-            color: white !important;
-            border: none !important;
-            border-radius: 8px !important;
-            padding: 0.6rem 1.5rem !important;
-            font-weight: 600 !important;
-            transition: all 0.3s !important;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
-        }
-        
-        .stButton button:hover {
-            transform: translateY(-2px) !important;
-            box-shadow: 0 6px 12px rgba(0,0,0,0.15) !important;
-        }
-        
-        /* Chat input */
-        .stChatInput {
-            border: 2px solid #667eea !important;
-            border-radius: 10px !important;
-            background-color: white !important;
-        }
-        
-        .stChatInput textarea {
-            color: #1a1a1a !important;
-            font-size: 16px !important;
-        }
-        
-        /* Expanders */
-        .streamlit-expanderHeader {
-            background-color: white !important;
-            color: #0e1117 !important;
-            border: 1px solid #e0e0e0 !important;
-            border-radius: 8px !important;
-            font-weight: 600 !important;
-        }
-        
-        .streamlit-expanderContent {
-            background-color: #fafafa !important;
-            border: 1px solid #e0e0e0 !important;
-            color: #0e1117 !important;
-        }
-        
-        /* Alert boxes */
-        .stAlert {
-            border-radius: 8px !important;
-            border-left-width: 4px !important;
-        }
-        
-        /* Success message */
-        .stSuccess {
-            background-color: #e8f5e9 !important;
-            color: #2e7d32 !important;
-        }
-        
-        /* Error message */
-        .stError {
-            background-color: #ffebee !important;
-            color: #c62828 !important;
-        }
-        
-        /* Warning message */
-        .stWarning {
-            background-color: #fff3e0 !important;
-            color: #ef6c00 !important;
-        }
-        
-        /* Info message */
-        .stInfo {
-            background-color: #e3f2fd !important;
-            color: #1565c0 !important;
-        }
-        
-        /* Title */
-        h1 {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            font-weight: 800 !important;
-            padding: 1rem 0 !important;
-        }
-        
-        /* Subheader */
-        h2, h3 {
-            color: #2c3e50 !important;
-            font-weight: 700 !important;
-            margin-top: 1.5rem !important;
-        }
-        
-        /* Caption/Footer */
-        .stCaption {
-            color: #666 !important;
-            text-align: center !important;
-            padding: 1rem !important;
-            border-top: 2px solid #e0e0e0 !important;
-            margin-top: 2rem !important;
-        }
-        
-        /* Spinner */
-        .stSpinner > div {
-            border-color: #667eea transparent transparent transparent !important;
-        }
-        
-        /* Code blocks */
-        code {
-            background-color: #f5f5f5 !important;
-            color: #d32f2f !important;
-            padding: 0.2rem 0.4rem !important;
-            border-radius: 4px !important;
-        }
-        
-        pre {
-            background-color: #1e1e1e !important;
-            color: #ffffff !important;
-            border-radius: 8px !important;
-            padding: 1rem !important;
-        }
-    </style>
+<style>
+    .main-header {
+        text-align: center;
+        padding: 1rem 0;
+        border-bottom: 1px solid #e0e0e0;
+        margin-bottom: 2rem;
+    }
+    .chat-container {
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    .user-message {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 0.5rem 0;
+        border-left: 4px solid #4CAF50;
+    }
+    .assistant-message {
+        background-color: #e8f4fd;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 0.5rem 0;
+        border-left: 4px solid #2196F3;
+    }
+    .source-docs {
+        background-color: #fff3cd;
+        padding: 0.5rem;
+        border-radius: 5px;
+        margin-top: 0.5rem;
+        font-size: 0.8rem;
+    }
+</style>
 """, unsafe_allow_html=True)
 
-# Header with gradient
-st.markdown("""
-    <div style='text-align: center; padding: 1rem 0 2rem 0;'>
-        <h1 style='font-size: 3rem; margin-bottom: 0.5rem;'>🏥 MediBot</h1>
-        <p style='font-size: 1.2rem; color: #666;'>Your AI-Powered Medical Document Assistant</p>
-    </div>
-""", unsafe_allow_html=True)
+# -------------------------
+# 🏥 Header
+# -------------------------
+st.markdown('<div class="main-header">', unsafe_allow_html=True)
+st.title("🏥 MediBot")
+st.markdown("**Your AI Medical Assistant**")
+st.markdown('</div>', unsafe_allow_html=True)
 
-# Initialize session state
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
-if 'vectorstore' not in st.session_state:
-    st.session_state.vectorstore = None
-if 'vectorstore_loaded' not in st.session_state:
-    st.session_state.vectorstore_loaded = False
-if 'database_building' not in st.session_state:
-    st.session_state.database_building = False
+# -------------------------
+# 🧠 Load embedding model
+# -------------------------
+@st.cache_resource
+def load_embedding_model():
+    return HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
-# Status Dashboard
-st.markdown("### System Status")
-status = get_vectorstore_status()
-pdf_files = check_pdf_files()
+try:
+    embedding_model = load_embedding_model()
+except Exception as e:
+    st.error(f"❌ Failed to load embedding model: {e}")
+    st.stop()
 
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("Medical Documents", len(pdf_files))
-with col2:
-    if st.session_state.vectorstore_loaded:
-        st.metric("Vector Database", "Pinecone")
-    else:
-        st.metric("Vector Database", "Loading...")
-with col3:
-    status_icon = "Ready" if status["api_key_available"] else "Missing"
-    st.metric("API Status", status_icon)
-with col4:
-    if st.session_state.database_building:
-        st.metric("Status", "Building DB")
-    else:
-        status_text = "Ready" if st.session_state.vectorstore_loaded else "Initializing"
-        st.metric("Status", status_text)
-
-st.markdown("---")
-
-# Debug info in expander
-with st.expander("Technical Details"):
-    st.write(f"**Pinecone API Key:** {'Configured' if os.getenv('PINECONE_API_KEY') else 'Missing'}")
-    st.write(f"**GROQ API Key:** {'Configured' if os.getenv('GROQ_API_KEY') else 'Missing'}")
-    st.write(f"**Vectorstore Status:** {'Loaded' if st.session_state.vectorstore_loaded else 'Initializing'}")
-    st.write(f"**Pinecone Index:** {'Ready' if status['pinecone_ready'] else 'Not Found'}")
-    st.write(f"**PDF Files:** {len(pdf_files)} documents")
-    if pdf_files:
-        with st.expander("View PDF Files"):
-            for i, pdf in enumerate(pdf_files, 1):
-                st.write(f"{i}. {pdf}")
-
-# Load vectorstore ONCE when app starts
-if not st.session_state.vectorstore_loaded:
-    if not status["pinecone_ready"]:
-        st.info("**Database Setup Required**\n\nClick the button below to build the medical knowledge base from your PDF documents.")
+# -------------------------
+# 📚 Initialize Qdrant Cloud Vector Store
+# -------------------------
+@st.cache_resource
+def init_qdrant():
+    try:
+        client = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+            timeout=30
+        )
         
-        if st.button("Build Knowledge Base", type="primary", use_container_width=True):
-            st.session_state.database_building = True
-            st.rerun()
-    
-    if st.session_state.database_building:
-        with st.spinner("Building Pinecone database... This may take 2-5 minutes."):
-            if ensure_database():
-                st.session_state.database_building = False
-                st.success("Database built successfully! Loading now...")
-                st.rerun()
-            else:
-                st.session_state.database_building = False
-                st.error("Database build failed. Please check the errors above.")
-                st.stop()
-    
-    if status["pinecone_ready"] and not st.session_state.database_building:
-        with st.spinner("Loading MediBot knowledge base from Pinecone..."):
-            vectorstore = get_vectorstore()
-            
-            if vectorstore:
-                st.session_state.vectorstore = vectorstore
-                st.session_state.vectorstore_loaded = True
-                st.success("MediBot is ready to assist you!")
-                st.rerun()
-            else:
-                st.error("""
-                **Failed to load knowledge base**
-                
-                The Pinecone vector database exists but failed to load. Possible causes:
-                - API compatibility issues
-                - Network connectivity problems
-                - Index corruption
-                
-                **Solution:** Try rebuilding the database
-                """)
-                if st.button("Rebuild Database", type="primary"):
-                    st.session_state.database_building = True
-                    st.rerun()
+        # Check if our collection exists
+        collections = client.get_collections()
+        collection_names = [col.name for col in collections.collections]
+        if COLLECTION_NAME not in collection_names:
+            st.error(f"❌ Collection '{COLLECTION_NAME}' not found. Please run the data ingestion script first.")
+            return None
+        
+        # Create vector store
+        vectorstore = QdrantVectorStore(
+            client=client,
+            collection_name=COLLECTION_NAME,
+            embedding=embedding_model
+        )
+        
+        return vectorstore
+        
+    except Exception as e:
+        st.error(f"❌ Failed to connect to Qdrant Cloud: {e}")
+        return None
 
-# Chat Interface
-if st.session_state.vectorstore_loaded:
-    st.markdown("---")
-    
-    # Chat controls
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1:
-        st.markdown("### Medical Consultation")
-    with col3:
-        if st.button("Clear Chat", use_container_width=True):
-            st.session_state.messages = []
-            st.rerun()
-    
-    # Display chat messages
-    for message in st.session_state.messages:
-        with st.chat_message(message['role']):
-            st.markdown(message['content'])
+vectorstore = init_qdrant()
+if vectorstore is None:
+    st.stop()
 
-    # Enhanced medical prompt template
-    MEDICAL_PROMPT_TEMPLATE = """You are MediBot, an expert AI medical assistant providing accurate medical information.
+# Create retriever
+retriever = vectorstore.as_retriever(
+    search_type="similarity",
+    search_kwargs={"k": 5}
+)
 
-MEDICAL CONTEXT:
+# -------------------------
+# ⚡ Initialize Groq LLM
+# -------------------------
+@st.cache_resource
+def load_llm():
+    return ChatGroq(
+        api_key=GROQ_API_KEY,
+        model="llama-3.1-8b-instant",
+        temperature=0.1
+    )
+
+try:
+    llm = load_llm()
+except Exception as e:
+    st.error(f"❌ Failed to initialize Groq LLM: {e}")
+    st.stop()
+
+# -------------------------
+# 🔗 Create RetrievalQA Chain with Custom Prompt
+# -------------------------
+from langchain.prompts import PromptTemplate
+
+custom_prompt = PromptTemplate(
+    template="""You are MediBot, a helpful and knowledgeable medical assistant. Use the following medical context to answer the user's question in a natural, conversational way. Provide accurate, helpful information without using phrases like "based on the context" or "according to the documents".
+
+Medical Context:
 {context}
 
-USER QUESTION: {question}
+Question: {question}
 
-INSTRUCTIONS:
-1. Answer based ONLY on the provided medical context
-2. If information is not in the context, clearly state this
-3. Provide clear, structured responses
-4. Always emphasize consulting healthcare professionals
-5. Be precise and evidence-based
+Answer in a friendly, professional tone as if you're having a conversation:""",
+    input_variables=["context", "question"]
+)
 
-Response:"""
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    chain_type="stuff",
+    retriever=retriever,
+    return_source_documents=True,
+    chain_type_kwargs={"prompt": custom_prompt}
+)
 
-    # Chat input
-    prompt = st.chat_input("Ask about medical conditions, treatments, medications...")
-    
-    if prompt:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        
-        with st.spinner("Searching medical knowledge base..."):
-            try:
-                groq_api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
-                if not groq_api_key:
-                    raise Exception("GROQ_API_KEY not found")
-                
-                if not st.session_state.vectorstore:
-                    raise Exception("Vectorstore not initialized")
-                
-                retriever = st.session_state.vectorstore.as_retriever(
-                    search_kwargs={'k': 3}
-                )
-                
-                qa_chain = RetrievalQA.from_chain_type(
-                    llm=ChatGroq(
-                        model_name="llama-3.1-8b-instant",
-                        temperature=0.1,
-                        groq_api_key=groq_api_key,
-                    ),
-                    chain_type="stuff",
-                    retriever=retriever,
-                    return_source_documents=True,
-                    chain_type_kwargs={'prompt': set_custom_prompt(MEDICAL_PROMPT_TEMPLATE)}
-                )
+# -------------------------
+# 💬 Chat Interface
+# -------------------------
+st.markdown('<div class="chat-container">', unsafe_allow_html=True)
 
-                response = qa_chain.invoke({'query': prompt})
-                result = response["result"]
-                source_documents = response["source_documents"]
-                
-                st.session_state.messages.append({"role": "assistant", "content": result})
-                
-                with st.chat_message("assistant"):
-                    st.markdown(result)
-                
-                if source_documents:
-                    with st.expander("View Source Documents"):
-                        for i, doc in enumerate(source_documents, 1):
-                            source_file = doc.metadata.get('source', 'Unknown')
-                            page_num = doc.metadata.get('page', 'N/A')
-                            st.markdown(f"**Source {i}:** `{source_file}` (Page {page_num})")
-                            st.text(doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content)
-                            if i < len(source_documents):
-                                st.divider()
-                
-            except Exception as e:
-                error_detail = f"An error occurred: {type(e).__name__}"
-                st.session_state.messages.append({"role": "assistant", "content": error_detail})
-                
-                with st.chat_message("assistant"):
-                    st.markdown(error_detail)
-                    st.error("Please check technical details below")
-                
-                with st.expander("Error Details"):
-                    st.error(f"**Error Type:** {type(e).__name__}")
-                    st.error(f"**Message:** {str(e)}")
-                    
-                    if "GROQ" in str(e) or "API" in str(e):
-                        st.warning("**GROQ API Issue** - Check your API key and credits")
-                    
-                    if "pinecone" in str(e).lower() or "vector" in str(e).lower():
-                        st.warning("**Vector Database Issue** - Pinecone connection problem")
-                    
-                    st.code(f"Traceback:\n{traceback.format_exc()}")
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Hello! I'm MediBot, your AI medical assistant. How can I help you with your medical questions today?"}
+    ]
 
-# Footer
+# Display chat messages
+for message in st.session_state.messages:
+    if message["role"] == "user":
+        st.markdown(f'<div class="user-message"><strong>You:</strong><br>{message["content"]}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="assistant-message"><strong>MediBot:</strong><br>{message["content"]}</div>', unsafe_allow_html=True)
+
+# Chat input
+if prompt := st.chat_input("Ask your medical question..."):
+    # Add user message to chat history and display
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.markdown(f'<div class="user-message"><strong>You:</strong><br>{prompt}</div>', unsafe_allow_html=True)
+
+    # Get response
+    with st.spinner("🧠 Thinking..."):
+        try:
+            response = qdrant_client.invoke({"query": prompt})
+            answer = response["result"]
+            sources = response.get("source_documents", [])
+            
+            # Display assistant response
+            st.markdown(f'<div class="assistant-message"><strong>MediBot:</strong><br>{answer}</div>', unsafe_allow_html=True)
+            
+            # Display sources in a subtle way
+            if sources:
+                unique_sources = set()
+                for doc in sources:
+                    source = doc.metadata.get('source', 'Unknown')
+                    if source not in unique_sources:
+                        unique_sources.add(source)
+                
+                if unique_sources:
+                    sources_text = "References: " + ", ".join([os.path.basename(src) for src in unique_sources])
+                    st.markdown(f'<div class="source-docs">{sources_text}</div>', unsafe_allow_html=True)
+            
+            # Add assistant response to chat history
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+            
+        except Exception as e:
+            error_msg = f"I apologize, but I encountered an error while processing your question. Please try again."
+            st.markdown(f'<div class="assistant-message"><strong>MediBot:</strong><br>{error_msg}</div>', unsafe_allow_html=True)
+            st.session_state.messages.append({"role": "assistant", "content": error_msg})
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# -------------------------
+# 🔧 Footer with Info
+# -------------------------
 st.markdown("---")
-st.markdown("""
-    <div style='text-align: center; padding: 2rem 0 1rem 0; color: #666;'>
-        <p style='font-size: 0.9rem; margin: 0;'>
-            <strong>Medical Disclaimer:</strong> This assistant provides informational support only.
-        </p>
-        <p style='font-size: 0.9rem; margin: 0.5rem 0;'>
-            Always consult qualified healthcare professionals for medical decisions and treatment.
-        </p>
-        <p style='font-size: 0.8rem; color: #999; margin-top: 1rem;'>
-            Powered by Pinecone Vector DB | LangChain | GROQ AI
-        </p>
-    </div>
-""", unsafe_allow_html=True)
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.markdown("**⚡ Powered by Groq**")
+with col2:
+    st.markdown("**🗂️ Qdrant Cloud**")
+with col3:
+    st.markdown("**🔒 Secure & Private**")
+
+# Clear chat button
+if st.button("🗑️ Clear Conversation"):
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Hello! I'm MediBot, your AI medical assistant. How can I help you with your medical questions today?"}
+    ]
+    st.rerun()

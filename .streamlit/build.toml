@@ -1,2 +1,0 @@
-[build]
-prebuild = "python build_db.py"
