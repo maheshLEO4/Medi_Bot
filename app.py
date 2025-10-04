@@ -24,81 +24,72 @@ COLLECTION_NAME = "medical-documents"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 st.set_page_config(
-    page_title="🏥 MediBot", 
-    page_icon="🧠", 
+    page_title="MediBot",
+    page_icon="🏥",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
 
 # -------------------------
-# 🎨 Custom CSS for Better UI
+# 🎨 Clean CSS
 # -------------------------
 st.markdown("""
 <style>
     .main-header {
         text-align: center;
         padding: 1rem 0;
-        border-bottom: 1px solid #e0e0e0;
         margin-bottom: 2rem;
     }
-    .chat-container {
-        max-width: 800px;
-        margin: 0 auto;
-    }
     .user-message {
-        background-color: #f0f2f6;
+        background-color: #f8f9fa;
         padding: 1rem;
-        border-radius: 10px;
+        border-radius: 15px;
         margin: 0.5rem 0;
         border-left: 4px solid #4CAF50;
     }
     .assistant-message {
-        background-color: #e8f4fd;
+        background-color: #e3f2fd;
         padding: 1rem;
-        border-radius: 10px;
+        border-radius: 15px;
         margin: 0.5rem 0;
         border-left: 4px solid #2196F3;
-    }
-    .source-docs {
-        background-color: #fff3cd;
-        padding: 0.5rem;
-        border-radius: 5px;
-        margin-top: 0.5rem;
-        font-size: 0.8rem;
     }
     .stChatInput {
         position: fixed;
         bottom: 20px;
-        width: 80%;
-        left: 10%;
+        width: 70%;
+        left: 15%;
+        background: white;
+    }
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stDeployButton {display:none;}
+    /* Style the chat input better */
+    .stChatInput input {
+        border-radius: 25px;
+        padding: 12px 20px;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # -------------------------
-# 🏥 Header
+# 🏥 Simple Header
 # -------------------------
-st.markdown('<div class="main-header">', unsafe_allow_html=True)
-st.title("🏥 MediBot")
-st.markdown("**Your AI Medical Assistant**")
-st.markdown('</div>', unsafe_allow_html=True)
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    st.markdown('<div class="main-header">', unsafe_allow_html=True)
+    st.title("🏥 MediBot")
+    st.markdown("**AI Medical Assistant**")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # -------------------------
-# 🧠 Load embedding model
+# 🔧 Initialize Components
 # -------------------------
 @st.cache_resource
 def load_embedding_model():
     return HuggingFaceEmbeddings(model_name=EMBED_MODEL)
 
-try:
-    embedding_model = load_embedding_model()
-except Exception as e:
-    st.error(f"❌ Failed to load embedding model: {e}")
-    st.stop()
-
-# -------------------------
-# 📚 Initialize Qdrant Cloud Vector Store
-# -------------------------
 @st.cache_resource
 def init_qdrant():
     try:
@@ -108,39 +99,23 @@ def init_qdrant():
             timeout=30
         )
         
-        # Check if our collection exists
+        # Check if collection exists
         collections = client.get_collections()
         collection_names = [col.name for col in collections.collections]
         if COLLECTION_NAME not in collection_names:
-            st.error(f"❌ Collection '{COLLECTION_NAME}' not found. Please run the data ingestion script first.")
+            st.error(f"Collection '{COLLECTION_NAME}' not found.")
             return None
         
-        # Create vector store
         vectorstore = QdrantVectorStore(
             client=client,
             collection_name=COLLECTION_NAME,
-            embedding=embedding_model
+            embedding=load_embedding_model()
         )
-        
         return vectorstore
-        
     except Exception as e:
-        st.error(f"❌ Failed to connect to Qdrant Cloud: {e}")
+        st.error(f"Failed to connect to Qdrant: {e}")
         return None
 
-vectorstore = init_qdrant()
-if vectorstore is None:
-    st.stop()
-
-# Create retriever
-retriever = vectorstore.as_retriever(
-    search_type="similarity",
-    search_kwargs={"k": 5}
-)
-
-# -------------------------
-# ⚡ Initialize Groq LLM
-# -------------------------
 @st.cache_resource
 def load_llm():
     return ChatGroq(
@@ -149,26 +124,29 @@ def load_llm():
         temperature=0.1
     )
 
+# Initialize components
 try:
+    embedding_model = load_embedding_model()
+    vectorstore = init_qdrant()
     llm = load_llm()
 except Exception as e:
-    st.error(f"❌ Failed to initialize Groq LLM: {e}")
+    st.error(f"Initialization error: {e}")
     st.stop()
 
-# -------------------------
-# 🔗 Create RetrievalQA Chain with Custom Prompt
-# -------------------------
+# Create retriever and QA chain
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
 from langchain.prompts import PromptTemplate
 
 custom_prompt = PromptTemplate(
-    template="""You are MediBot, a helpful and knowledgeable medical assistant. Use the following medical context to answer the user's question in a natural, conversational way. Provide accurate, helpful information without using phrases like "based on the context" or "according to the documents".
+    template="""You are a medical assistant. Answer the question naturally using the context.
 
-Medical Context:
+Context:
 {context}
 
 Question: {question}
 
-Answer in a friendly, professional tone as if you're having a conversation:""",
+Answer conversationally:""",
     input_variables=["context", "question"]
 )
 
@@ -181,14 +159,13 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 # -------------------------
-# 💬 Chat Interface
+# 💬 Clean Chat Interface
 # -------------------------
-st.markdown('<div class="chat-container">', unsafe_allow_html=True)
 
 # Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! I'm MediBot, your AI medical assistant. How can I help you with your medical questions today?"}
+        {"role": "assistant", "content": "Hello! I'm MediBot. How can I assist you with medical questions today?"}
     ]
 
 # Display chat messages
@@ -199,58 +176,28 @@ for message in st.session_state.messages:
         st.markdown(f'<div class="assistant-message"><strong>MediBot:</strong><br>{message["content"]}</div>', unsafe_allow_html=True)
 
 # Chat input
-if prompt := st.chat_input("Ask your medical question..."):
-    # Add user message to chat history and display
+if prompt := st.chat_input("Ask a medical question..."):
+    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.markdown(f'<div class="user-message"><strong>You:</strong><br>{prompt}</div>', unsafe_allow_html=True)
 
     # Get response
-    with st.spinner("🧠 Thinking..."):
+    with st.spinner("Thinking..."):
         try:
             response = qa_chain.invoke({"query": prompt})
             answer = response["result"]
-            sources = response.get("source_documents", [])
             
             # Display assistant response
             st.markdown(f'<div class="assistant-message"><strong>MediBot:</strong><br>{answer}</div>', unsafe_allow_html=True)
-            
-            # Display sources in a subtle way
-            if sources:
-                unique_sources = set()
-                for doc in sources:
-                    source = doc.metadata.get('source', 'Unknown')
-                    if source not in unique_sources:
-                        unique_sources.add(source)
-                
-                if unique_sources:
-                    sources_text = "References: " + ", ".join([os.path.basename(src) for src in unique_sources])
-                    st.markdown(f'<div class="source-docs">{sources_text}</div>', unsafe_allow_html=True)
-            
-            # Add assistant response to chat history
             st.session_state.messages.append({"role": "assistant", "content": answer})
             
         except Exception as e:
-            error_msg = f"I apologize, but I encountered an error while processing your question. Please try again."
+            error_msg = "I apologize, but I encountered an error. Please try again."
             st.markdown(f'<div class="assistant-message"><strong>MediBot:</strong><br>{error_msg}</div>', unsafe_allow_html=True)
             st.session_state.messages.append({"role": "assistant", "content": error_msg})
 
-st.markdown('</div>', unsafe_allow_html=True)
-
 # -------------------------
-# 🔧 Footer with Info
+# 🎯 Simple Footer
 # -------------------------
 st.markdown("---")
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.markdown("**⚡ Powered by Groq**")
-with col2:
-    st.markdown("**🗂️ Qdrant Cloud**")
-with col3:
-    st.markdown("**🔒 Secure & Private**")
-
-# Clear chat button
-if st.button("🗑️ Clear Conversation"):
-    st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! I'm MediBot, your AI medical assistant. How can I help you with your medical questions today?"}
-    ]
-    st.rerun()
+st.caption("MediBot - AI Medical Assistant")
