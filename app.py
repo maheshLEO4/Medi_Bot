@@ -60,7 +60,7 @@ st.markdown("""
         min-height: 500px;
         max-height: 600px;
         overflow-y: auto;
-        padding: 1rem;
+        padding: 0.5rem;
         margin-bottom: 1rem;
     }
     .clear-btn {
@@ -148,14 +148,14 @@ retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
 from langchain.prompts import PromptTemplate
 
 custom_prompt = PromptTemplate(
-    template="""You are MediBot, a helpful and knowledgeable medical assistant. Use the following medical context to answer the user's question in a natural, conversational way. Provide accurate, helpful information without using phrases like "based on the context" or "according to the documents".
+    template="""You are a helpful medical assistant. Answer the question naturally and conversationally using the medical context provided.
 
 Medical Context:
 {context}
 
 Question: {question}
 
-Answer in a friendly, professional tone as if you're having a conversation:""",
+Provide a clear, helpful answer in a friendly tone:""",
     input_variables=["context", "question"]
 )
 
@@ -195,7 +195,7 @@ with col2:
         clear_chat()
         st.rerun()
 
-# Chat container
+# Chat container without box
 st.markdown('<div class="chat-container">', unsafe_allow_html=True)
 
 # Display chat messages
