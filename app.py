@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -------------------------
-# 🔐 API KEYS
+# 🔑 API KEYS
 # -------------------------
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
@@ -24,74 +24,10 @@ COLLECTION_NAME = "medical-documents"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 st.set_page_config(
-    page_title="MediBot",
-    page_icon="🏥",
-    layout="centered",
-    initial_sidebar_state="collapsed"
+    page_title="MediBot AI",
+    page_icon="🤖",
+    layout="wide"
 )
-
-# -------------------------
-# 🎨 Clean CSS
-# -------------------------
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        padding: 0.5rem 0;
-        margin-bottom: 1rem;
-    }
-    .user-message {
-        background-color: #f0f2f6;
-        padding: 12px 16px;
-        border-radius: 18px;
-        margin: 8px 0;
-        max-width: 80%;
-        margin-left: auto;
-    }
-    .assistant-message {
-        background-color: #e8f4fd;
-        padding: 12px 16px;
-        border-radius: 18px;
-        margin: 8px 0;
-        max-width: 80%;
-        margin-right: auto;
-    }
-    .chat-container {
-        min-height: 500px;
-        max-height: 600px;
-        overflow-y: auto;
-        padding: 0.5rem;
-        margin-bottom: 1rem;
-    }
-    .clear-btn {
-        margin-bottom: 1rem;
-    }
-    .sources-dropdown {
-        background-color: #f8f9fa;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 8px;
-        margin-top: 8px;
-        font-size: 0.85rem;
-    }
-    /* Hide Streamlit branding */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stDeployButton {display:none;}
-    /* Chat input styling */
-    .stChatInput {
-        position: relative;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# -------------------------
-# 🏥 Simple Header
-# -------------------------
-st.markdown('<div class="main-header">', unsafe_allow_html=True)
-st.title("🏥 MediBot")
-st.markdown("**AI Medical Assistant**")
-st.markdown('</div>', unsafe_allow_html=True)
 
 # -------------------------
 # 🔧 Initialize Components
@@ -168,86 +104,122 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 # -------------------------
-# 💬 Clean Chat Interface
+# 💬 Chat Interface (DocuBot Style)
 # -------------------------
 
-# Initialize chat history
+# Initialize session state
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! I'm MediBot, your AI medical assistant. How can I help you with medical questions today?"}
-    ]
+    st.session_state.messages = []
 
-# Store source documents
+# Initialize source documents storage
 if "source_docs" not in st.session_state:
     st.session_state.source_docs = {}
 
-# Clear chat function
-def clear_chat():
-    st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! I'm MediBot, your AI medical assistant. How can I help you with medical questions today?"}
-    ]
-    st.session_state.source_docs = {}
-
-# Clear chat button
-col1, col2 = st.columns([3, 1])
-with col2:
-    if st.button("🗑️ Clear Chat", use_container_width=True, key="clear_chat"):
-        clear_chat()
+# --- Sidebar ---
+with st.sidebar:
+    st.title("MediBot Controls")
+    st.markdown("AI-powered medical assistant for your health questions.")
+    
+    st.markdown("---")
+    st.success("Using Qdrant Cloud Storage")
+    
+    st.markdown("---")
+    if st.button("Clear Chat History", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.source_docs = {}
+        st.toast("Chat history cleared!", icon="🧹")
         st.rerun()
+    
+    st.markdown("---")
+    st.subheader("Knowledge Base Info")
+    st.write(f"**Collection:** {COLLECTION_NAME}")
+    st.write(f"**Model:** llama-3.1-8b-instant")
 
-# Chat container without box
-st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+# --- Main Chat ---
+st.title("MediBot AI: Your Medical Assistant")
+st.markdown("Ask questions about medical topics and get informed answers.")
+
+# Display welcome message
+if not st.session_state.messages:
+    st.success("Ready! Ask me any medical questions.")
+    st.info("Using Qdrant Cloud for fast, scalable medical knowledge retrieval")
 
 # Display chat messages
-for i, message in enumerate(st.session_state.messages):
-    if message["role"] == "user":
-        st.markdown(f'<div class="user-message"><strong>You:</strong><br>{message["content"]}</div>', unsafe_allow_html=True)
-    else:
-        st.markdown(f'<div class="assistant-message"><strong>MediBot:</strong><br>{message["content"]}</div>', unsafe_allow_html=True)
+for idx, message in enumerate(st.session_state.messages):
+    with st.chat_message(message['role']):
+        st.markdown(message['content'])
         
-        # Show sources dropdown for assistant messages that have sources
-        if i in st.session_state.source_docs and st.session_state.source_docs[i]:
-            with st.expander("📚 View Sources", expanded=False):
-                sources = st.session_state.source_docs[i]
-                for j, doc in enumerate(sources, 1):
-                    source_name = doc.metadata.get('source', 'Unknown Document')
-                    page_info = doc.metadata.get('page', '')
+        # Show sources for assistant messages
+        if message['role'] == 'assistant' and idx in st.session_state.source_docs:
+            source_documents = st.session_state.source_docs[idx]
+            if source_documents:
+                with st.expander("Source References"):
+                    st.caption("Sources from medical knowledge base")
                     
-                    st.markdown(f"**Source {j}:**")
-                    st.markdown(f"📄 {os.path.basename(source_name)}")
-                    if page_info:
-                        st.markdown(f"📖 Page: {page_info}")
-                    st.markdown(f"**Content:** {doc.page_content[:200]}...")
-                    st.markdown("---")
+                    for i, doc in enumerate(source_documents, 1):
+                        source_name = doc.metadata.get('source', 'Unknown Document')
+                        page_info = doc.metadata.get('page', 'N/A')
+                        
+                        # Display source name
+                        display_name = os.path.basename(source_name)
+                        if len(display_name) > 50:
+                            display_name = display_name[:47] + "..."
+                        
+                        st.markdown(f"**📄 Source {i}:** `{display_name}`")
+                        
+                        if page_info != 'N/A':
+                            st.caption(f"**Page:** {page_info}")
+                        
+                        excerpt = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+                        st.caption(f'**Excerpt:** "{excerpt}"')
+                        st.markdown("---")
 
-st.markdown('</div>', unsafe_allow_html=True)
-
-# Chat input
+# Handle user input
 if prompt := st.chat_input("Ask a medical question..."):
-    # Add user message to chat
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # Get and display response
-    with st.spinner("Thinking..."):
-        try:
+    st.chat_message('user').markdown(prompt)
+    st.session_state.messages.append({'role': 'user', 'content': prompt})
+
+    try:
+        with st.spinner("Thinking..."):
+            import time
+            start_time = time.time()
+            
             response = qa_chain.invoke({"query": prompt})
             answer = response["result"]
             sources = response.get("source_documents", [])
             
-            # Store sources for this message
+            processing_time = time.time() - start_time
+            
+            with st.chat_message('assistant'):
+                st.markdown(answer)
+                
+                if sources:
+                    with st.expander("Source References"):
+                        st.caption("Sources from medical knowledge base")
+                        
+                        for i, doc in enumerate(sources, 1):
+                            source_name = doc.metadata.get('source', 'Unknown Document')
+                            page_info = doc.metadata.get('page', 'N/A')
+                            
+                            display_name = os.path.basename(source_name)
+                            if len(display_name) > 50:
+                                display_name = display_name[:47] + "..."
+                            
+                            st.markdown(f"**📄 Source {i}:** `{display_name}`")
+                            
+                            if page_info != 'N/A':
+                                st.caption(f"**Page:** {page_info}")
+                            
+                            excerpt = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+                            st.caption(f'**Excerpt:** "{excerpt}"')
+                            st.markdown("---")
+            
+            # Store message and sources
             message_index = len(st.session_state.messages)
+            st.session_state.messages.append({'role': 'assistant', 'content': answer})
             st.session_state.source_docs[message_index] = sources
             
-            st.session_state.messages.append({"role": "assistant", "content": answer})
-            
-        except Exception as e:
-            error_msg = "I apologize, but I encountered an error processing your question. Please try again."
-            st.session_state.messages.append({"role": "assistant", "content": error_msg})
-    
-    st.rerun()
-
-# -------------------------
-# 🎯 Simple Footer
-# -------------------------
-st.markdown("---")
-st.caption("MediBot - Your AI Medical Assistant")
+    except Exception as e:
+        error_msg = f"An error occurred while processing your question: {str(e)}"
+        st.error(error_msg)
+        st.session_state.messages.append({'role': 'assistant', 'content': error_msg})
