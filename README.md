@@ -202,5 +202,3 @@ Medi_Bot uses a **Retrieval-Augmented Generation (RAG)** approach:
 
 
 
-Would you like me to now add a **`requirements.txt`** (with all typical dependencies like `faiss-cpu`, `langchain`, `openai`, `tiktoken`, etc.) so the project runs out of the box?
-```
